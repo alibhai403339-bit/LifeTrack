@@ -1,0 +1,97 @@
+name: Build LifeTrack APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find Android project ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          ZIP_FILE="$(find . -maxdepth 3 -type f \
+            -iname 'lifetrack-build-ready.zip' \
+            -print -quit)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            ZIP_FILE="$(find . -maxdepth 3 -type f \
+              -iname '*.zip' \
+              -print -quit)"
+          fi
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No Android project ZIP found."
+            echo "Upload your project ZIP to the repository root."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+          echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract Android project
+        shell: bash
+        run: |
+          mkdir -p extracted
+          unzip -q "${{ steps.find_zip.outputs.zip_file }}" \
+            -d extracted
+
+          echo "Extracted project files:"
+          find extracted -maxdepth 4 -type f \
+            \( -name 'gradlew' -o -name 'settings.gradle' \
+            -o -name 'settings.gradle.kts' \
+            -o -name 'build.gradle' \
+            -o -name 'build.gradle.kts' \) -print
+
+      - name: Locate Gradle project
+        id: gradle
+        shell: bash
+        run: |
+          GRADLEW="$(find extracted -type f \
+            -name gradlew -print -quit)"
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew not found."
+            echo "The ZIP must contain a complete Android project."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$GRADLEW")"
+
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          chmod +x "$GRADLEW"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Android APK
+        working-directory: ${{ steps.gradle.outputs.project_dir }}
+        shell: bash
+        run: |
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LifeTrack-APK
+          path: extracted/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
